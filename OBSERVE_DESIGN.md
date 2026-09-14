@@ -1,235 +1,447 @@
-# Distributed System Observability Design Document
+# System Architecture & Design Document: Healthcare Observability Platform
 
-## 1. Executive Summary & Architectural Goals
+## 1. Executive Summary & System Overview
 
-The Healthcare Platform observability subsystem provides unified, low-overhead telemetry across all domain services (e.g., `healthcare-api`, `healthcare-notification-api`). The architecture decouples telemetry ingestion, storage, and querying from transactional business logic while enforcing strict correlation across the three core observability pillars: **Traces**, **Metrics**, and **Logs**.
-
-### Primary Design Goals
-
-- **Single Standard Ingestion:** Standardize on the OpenTelemetry (OTel) protocol across services regardless of underlying runtime.
-- **Context Propagation:** Correlate inbound user actions across service boundaries using W3C Trace Context headers (`traceparent`).
-- **Cardinality Control:** Safeguard metric store memory by restricting dynamic attributes (user IDs, request IDs, UUIDs) strictly to log metadata and trace span attributes—never Prometheus labels.
-- **Pull-Based Metrics, Push-Based Traces/Logs:** Utilize Prometheus scraping via Kubernetes service discovery alongside push-based OTLP pipelines for traces and structured logs.
-
----
-
-## 2. High-Level Architecture
+The Healthcare Observability Platform is a centralized telemetry system tailored specifically for our Node.js/NestJS microservices ecosystem (`healthcare-api`, `healthcare-notification-api`). Built entirely on Node.js, TypeScript, and NestJS, the system eliminates vendor lock-in by implementing the OpenTelemetry (OTel) standard across all three observability pillars: **Distributed Tracing**, **Metrics Scraping**, and **Structured Log Correlation**.
 
 ```text
-                                    +-----------------------------------------+
-                                    |         User / Web Client / Mobile      |
-                                    +--------------------+--------------------+
-                                                         |
-                                                         | HTTP (x-request-id / traceparent)
-                                                         v
-                                    +-----------------------------------------+
-                                    |              API Gateway                |
-                                    +---------+---------------------+---------+
-                                              |                     |
-                        HTTP / gRPC (W3C Trace Context)             |
-                                              |                     |
-                                              v                     v
-                                  +-------------------+   +--------------------+
-                                  |  healthcare-api   |   | healthcare-notif   |
-                                  +---------+---------+   +----------+---------+
-                                            |                        |
-             +------------------------------+                        +------------------------------+
-             |                              |                        |                              |
-      stdout | (JSON Logs)      OTLP (gRPC) |                 stdout | (JSON Logs)      OTLP (gRPC) |
-             v                              v                        v                              v
-    +-----------------+           +-------------------+    +-----------------+            +-------------------+
-    | Container Engine|           |                   |    | Container Engine|            |                   |
-    +--------+--------+           |                   |    +--------+--------+            |                   |
-             |                    |                   |             |                     |                   |
-             | Log scraping       |  OTel Collector   |             | Log scraping        |  OTel Collector   |
-             | (Alloy / Agent)    |  (Daemon / Mesh)  |             | (Alloy / Agent)     |  (Daemon / Mesh)  |
-             +------------------->|                   |<------------+-------------------->|                   |
-                                  +----+---------+----+                                   +----+---------+----+
-                                       |         |                                             |         |
-                                       |         | Push                                        |         |
-                                       |         +-----------------------+                     |         |
-                                       v                                 v                     v         v
-                               +---------------+                 +---------------+     +---------------+
-                               |  Grafana Loki |                 |  Tempo (OTLP) |     |  Prometheus   |
-                               +-------+-------+                 +-------+-------+     +-------+-------+
-                                       |                                 |                     ^
-                                       |                                 |                     | Pull: /metrics
-                                       |                                 +----------+          | (every 15s)
-                                       |                                            |          |
-                                       v                                            v          v
-                               +---------------------------------------------------------------+
-                               |                        Grafana UI                             |
-                               +---------------------------------------------------------------+
++------------------------------------------------------------------------------------+
+|                                    CORE TOPOLOGY                                   |
++------------------------------------------------------------------------------------+
+|                                                                                    |
+|   +--------------------------+               +---------------------------------+   |
+|   |  healthcare-api (NestJS) |               | healthcare-notification (NestJS)|   |
+|   |  - TypeORM on MySQL      |               | - Prisma on MySQL               |   |
+|   |  - OTel NodeSDK + Pino   |               | - OTel NodeSDK + Pino           |   |
+|   +------------+-------------+               +----------------+----------------+   |
+|                |                                              |                    |
+|                | OTLP/gRPC (4317)                             | OTLP/gRPC (4317)   |
+|                | Pull: /metrics (5501)                        | Pull: /metrics     |
+|                | stdout (JSON Logs)                           | stdout (JSON Logs) |
+|                +-----------------------+----------------------+                    |
+|                                        |                                           |
+|                                        v                                           |
+|                      +----------------------------------+                          |
+|                      |  OpenTelemetry Collector Cluster |                          |
+|                      |  (Receivers, Batch, Filters)     |                          |
+|                      +----+-------------+------------+--+                          |
+|                           |             |            |                             |
+|              Push Logs    |             | Push Traces| Scrape /metrics             |
+|              (HTTP 3100)  |             | (gRPC 4317)| (HTTP 9090)                 |
+|                           v             v            v                             |
+|                     +-----------+ +-----------+ +------------+                     |
+|                     |   Loki    | |   Tempo   | | Prometheus |                     |
+|                     +-----+-----+ +-----+-----+ +-----+------+                     |
+|                           |             |             |                            |
+|                           +-------------+-------------+                            |
+|                                         |                                          |
+|                                         v                                          |
+|                              +---------------------+                               |
+|                              |     Grafana OSS     |                               |
+|                              | (Unified Dashboards)|                               |
+|                              +---------------------+                               |
++------------------------------------------------------------------------------------+
 ```
+
+### Architectural Guarantees
+
+- **Strict Trace Propagation:** W3C `traceparent` headers link NestJS HTTP, event emitter, and message queue contexts across services.
+- **Bounded Cardinality:** Metrics are strictly pull-based using static route templates (`/appointments/:id`), completely omitting dynamic entities (`userId`, `appointmentId`) from Prometheus label sets.
+- **Low-Overhead Logging:** Non-blocking asynchronous JSON log writing to `stdout` with automatic correlation injection (`traceId`, `spanId`).
 
 ---
 
-## 3. The Three Pillars of Observability
+## 2. Shared NestJS Observability Architecture
 
-### Correlation Matrix
+To ensure uniformity across all services without copy-pasting instrumentation logic, a shared internal workspace package (`@healthcare/nestjs-observability`) is integrated directly into the NestJS runtime.
 
-| Pillar   | Pipeline Protocol  | Target Backend | Indexing / Labels   | High-Cardinality?        |
-|----------|--------------------|----------------|---------------------|--------------------------|
-| Metrics  | HTTP GET /metrics  | Prometheus     | service, env, route | **NO** (Strictly Banned) |
-| Logs     | stdout -> OTLP     | Grafana Loki   | service, env, level | YES (Metadata only)      |
-| Traces   | OTLP (gRPC 4317)   | Grafana Tempo  | service, span_name  | YES (Span attributes)    |
+```text
+                  NESTJS SERVICE INITIALIZATION SEQUENCE
 
-### 3.1 Distributed Tracing
+    [process.main()]
+           |
+           v
+    +-----------------------------------------------+
+    | 1. initTracing(serviceName)                   |
+    |    - Bootstraps OTel NodeSDK                  |
+    |    - Injects HttpInstrumentation              |
+    |    - Injects ExpressInstrumentation           |
+    |    - Injects MySQL2 / TypeORM / Prisma Hooks  |
+    +-----------------------+-----------------------+
+                            |
+                            v
+    +-----------------------------------------------+
+    | 2. NestFactory.create(AppModule)              |
+    |    - Registers AppObservabilityModule         |
+    |    - Mounts PinoLogger middleware             |
+    |    - Configures metrics interceptor           |
+    +-----------------------+-----------------------+
+                            |
+                            v
+    +-----------------------------------------------+
+    | 3. Application Lifecycle                      |
+    |    - Intercepts requests & extracts contexts  |
+    |    - Exposes GET /metrics on service port     |
+    +-----------------------------------------------+
+```
 
-- **Standard:** W3C Trace Context (`traceparent`, `tracestate`).
-- **Instrumentation:** The OpenTelemetry NodeSDK initializes before any framework imports.
-- **Span Generation:**
-  - Inbound HTTP requests automatically start a server span.
-  - Database queries (via TypeORM or Prisma) generate child spans containing normalized SQL statements.
-  - Outbound requests or event emissions inject `traceparent` headers into outgoing payloads.
+### 2.1 OpenTelemetry Bootstrapper (`src/tracing/sdk.ts`)
 
-### 3.2 Structured Logging
+Must execute **before** any database drivers, Express, or NestJS modules are imported into memory:
 
-- **Mechanism:** Applications emit single-line, structured JSON directly to `stdout`.
-- **Zero Synchronous Network I/O:** Services never push logs to a network socket synchronously. The underlying container runtime flushes stdout, and a log collector (OTel Collector / Grafana Alloy) forwards entries asynchronously.
-- **Canonical Fields Present in Every Log Line:**
+```typescript
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
+import { Resource } from '@opentelemetry/resources';
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 
-```json
-{
-  "severity": "INFO",
-  "time": 1773532800000,
-  "service": {
-    "name": "healthcare-api",
-    "version": "1.2.0"
-  },
-  "environment": "production",
-  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
-  "spanId": "00f067aa0ba902b7",
-  "message": "Appointment booked successfully",
-  "appointmentId": "apt-83921",
-  "http": {
-    "method": "POST",
-    "url": "/appointments"
+export function bootstrapTelemetry(serviceName: string, serviceVersion: string = '1.0.0') {
+  const exporter = new OTLPTraceExporter({
+    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://otel-collector.observability.svc.cluster.local:4317',
+  });
+
+  const sdk = new NodeSDK({
+    resource: new Resource({
+      [ATTR_SERVICE_NAME]: serviceName,
+      [ATTR_SERVICE_VERSION]: serviceVersion,
+      'deployment.environment': process.env.NODE_ENV || 'production',
+    }),
+    traceExporter: exporter,
+    instrumentations: [
+      getNodeAutoInstrumentations({
+        '@opentelemetry/instrumentation-fs': { enabled: false }, // suppress noisy file reads
+        '@opentelemetry/instrumentation-dns': { enabled: false },
+      }),
+    ],
+  });
+
+  sdk.start();
+
+  process.on('SIGTERM', () => {
+    sdk.shutdown().finally(() => process.exit(0));
+  });
+}
+```
+
+### 2.2 Structured Pino Logger Module (`src/logger/logger.module.ts`)
+
+Injects the active OpenTelemetry context into the JSON payload emitted to `stdout`.
+
+```typescript
+import { DynamicModule, Module } from '@nestjs/common';
+import { LoggerModule } from 'nestjs-pino';
+import { trace, context } from '@opentelemetry/api';
+
+@Module({})
+export class AppObservabilityLoggerModule {
+  static forRoot(serviceName: string): DynamicModule {
+    return LoggerModule.forRoot({
+      pinoHttp: {
+        level: process.env.LOG_LEVEL || 'info',
+        base: {
+          service: { name: serviceName, version: process.env.npm_package_version || '1.0.0' },
+          env: process.env.NODE_ENV || 'production',
+        },
+        messageKey: 'message',
+        formatters: {
+          level: (label) => ({ severity: label.toUpperCase() }),
+        },
+        mixin: () => {
+          const activeSpan = trace.getSpan(context.active());
+          if (!activeSpan) return {};
+          const spanContext = activeSpan.spanContext();
+          return {
+            traceId: spanContext.traceId,
+            spanId: spanContext.spanId,
+            traceFlags: spanContext.traceFlags,
+          };
+        },
+      },
+    });
   }
 }
 ```
 
-### 3.3 Metrics Collection
+### 2.3 Metrics Interceptor & Exposer (`src/metrics/metrics.controller.ts`)
 
-- **Model:** Explicit pull/scrape architecture.
-- **Endpoint:** Each service exposes an unauthenticated (or cluster-internal) `/metrics` endpoint on its assigned application port.
-- **Scrape Interval:** 15 seconds across production environments.
-- **Cardinality Safeguard:**
-  - **Allowed metric labels:** `method`, `route` (parameterized, e.g., `/users/:id`), `status_code`, `service_name`, `environment`.
-  - **Forbidden metric labels:** `userId`, `patientId`, `appointmentId`, `email`, `traceId`.
+Maintains the pull model by serving Prometheus-compliant metrics over `/metrics` with standardized labels.
+
+```typescript
+import { Controller, Get, Res } from '@nestjs/common';
+import { Response } from 'express';
+import { register, collectDefaultMetrics, Counter, Histogram } from 'prom-client';
+
+collectDefaultMetrics({ prefix: 'healthcare_' });
+
+export const httpRequestDuration = new Histogram({
+  name: 'healthcare_http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'status_code'],
+  buckets: [0.01, 0.05, 0.1, 0.3, 0.5, 1, 2, 5],
+});
+
+export const httpRequestsTotal = new Counter({
+  name: 'healthcare_http_requests_total',
+  help: 'Total count of HTTP requests handled',
+  labelNames: ['method', 'route', 'status_code'],
+});
+
+@Controller('metrics')
+export class MetricsController {
+  @Get()
+  async getMetrics(@Res() res: Response) {
+    res.setHeader('Content-Type', register.contentType);
+    res.send(await register.metrics());
+  }
+}
+```
 
 ---
 
-## 4. Cross-Service Interaction & Context Propagation Flow
+## 3. Distributed Tracing & Inter-Service Correlation
 
-When a user initiates an action (e.g., booking an appointment), telemetry links the distributed request cycle across microservices:
+When a patient books an appointment in `healthcare-api`, triggering an alert dispatch via `healthcare-notification-api`, context is preserved end-to-end via W3C `traceparent` headers.
 
 ```text
-+---------------+           +--------------------+           +-------------------------------+
-|  Client App   |           |   healthcare-api   |           |  healthcare-notification-api  |
-+-------+-------+           +---------+----------+           +---------------+---------------+
-        |                             |                                      |
-        | 1. POST /appointments       |                                      |
-        |    x-request-id: req-001    |                                      |
-        +---------------------------->|                                      |
-        |                             | 2. Starts root span:                 |
-        |                             |    TraceID: 0x4bf9...                |
-        |                             |    SpanID:  0x00f0...                |
-        |                             |                                      |
-        |                             | 3. Inserts row into MySQL            |
-        |                             |    (Generates DB child span)         |
-        |                             |                                      |
-        |                             | 4. Emits notification dispatch event |
-        |                             |    Headers: traceparent: 00-4bf9...  |
-        |                             +------------------------------------->|
-        |                             |                                      | 5. Extracts traceparent
-        |                             |                                      |    Starts child span under
-        |                             |                                      |    same TraceID: 0x4bf9...
-        |                             |                                      |
-        |                             |                                      | 6. Sends Push / SMS
-        |                             |                                      |    Logs success with:
-        |                             |                                      |    traceId=0x4bf9...
-        |                             |                                      |    service=notification-api
-        | 7. HTTP 201 Created         |                                      |
-        |<----------------------------+                                      |
+       [healthcare-api]                            [healthcare-notification-api]
+ (TypeORM Engine on MySQL)                              (Prisma Engine on MySQL)
+            |                                                      |
+            | 1. POST /appointments                                |
+            |    (Start Root Span: 0x8af4...)                      |
+            +--------------------------------+                     |
+            | 2. DB Transaction (TypeORM)    |                     |
+            |    (Child Span: 0x1b2c...)     |                     |
+            +--------------------------------+                     |
+            |                                                      |
+            | 3. POST /notifications/dispatch                      |
+            |    Headers: traceparent=00-8af4...-3d4f...-01        |
+            +----------------------------------------------------->|
+                                                                   | 4. Extract parent context
+                                                                   |    (Child Span: 0x9e8a...)
+                                                                   +--------------------------------+
+                                                                   | 5. DB Persistence (Prisma)     |
+                                                                   |    (Child Span: 0x7a6d...)     |
+                                                                   +--------------------------------+
+                                                                   | 6. Dispatch Email/SMS          |
+                                                                   |    (Log JSON with traceId)     |
+                                                                   +--------------------------------+
 ```
 
-- **Context Extraction:** `healthcare-api` extracts the incoming `x-request-id` and initiates a new OpenTelemetry root trace (`traceId: 0x4bf9...`).
-- **Local Correlation:** Pino log mixins inject the active `traceId` and `spanId` into all logs produced during the HTTP lifecycle.
-- **Context Injection:** When `healthcare-api` calls `healthcare-notification-api` (or pushes a task to a queue), it injects the W3C `traceparent` header (`00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`).
-- **Downstream Adoption:** `healthcare-notification-api` receives the request, extracts the `traceparent`, and binds all its subsequent operations, DB queries, and logs to the original `traceId`.
-- **Unified Querying:** Searching `traceId: 4bf92f3577b34da6a3ce929d0e0e4736` in Grafana aggregates traces across both services alongside their interleaved logs from Loki.
+### Data Pipeline Matrix
+
+| Pillar  | Collection Mechanism       | Pipeline Protocol              | Target Ingestor          | Indexing Rules                                                          |
+|---------|----------------------------|--------------------------------|--------------------------|-------------------------------------------------------------------------|
+| Traces  | In-app OTel NodeSDK        | OTLP via gRPC (port 4317)      | OTel Collector → Tempo   | Low-cardinality span names, high-cardinality tags in span attributes    |
+| Metrics | Pull scraping via HTTP     | PromQL text format (`/metrics`) | Prometheus (port 9090)   | Label sets limited to `method`, `route`, `status_code`, `env`           |
+| Logs    | Node.js `stdout`           | JSON Lines collected via OTel/Alloy | Grafana Loki (port 3100) | Indexed labels: `service`, `env`, `severity`. IDs are structured metadata |
 
 ---
 
-## 5. Polyglot Service Integration Contract
+## 4. Infrastructure Specifications & Configurations
 
-All services in the ecosystem must adhere to the standard integration matrix:
+### 4.1 OpenTelemetry Collector Pipeline (`otel-collector-config.yaml`)
 
-### Language Integration Matrix
+Processes traces and forwards logs to Loki while gathering collector runtime metrics.
 
-| Ecosystem         | Logging              | Metrics                  | Tracing SDK                            |
-|-------------------|----------------------|--------------------------|----------------------------------------|
-| Node.js / NestJS  | Pino / nestjs-pino   | prom-client (`/metrics`) | `@opentelemetry/sdk-node`              |
-| Go                | slog or Uber Zap     | prometheus/client_golang | `go.opentelemetry.io/otel`             |
-| Java / Spring     | Logback + Logstash   | Micrometer Prometheus    | `io.opentelemetry:opentelemetry-api`   |
-| Python            | structlog            | prometheus_client        | `opentelemetry-sdk`                    |
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
 
-### Universal Service Requirements
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+  batch:
+    timeout: 1s
+    send_batch_size: 512
 
-**Health & Metrics Endpoints:**
+exporters:
+  loki:
+    endpoint: http://loki.observability.svc.cluster.local:3100/loki/api/v1/push
+    default_labels_enabled:
+      exporter: false
+      job: true
+      instance: false
 
-- `GET /health` (or `/ready`): Returns HTTP 200 when operational.
-- `GET /metrics`: Exposes Prometheus-formatted text metrics.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: "otel"
 
-**Environment Variables:**
+  otlp/tempo:
+    endpoint: tempo.observability.svc.cluster.local:4317
+    tls:
+      insecure: true
 
-- `OTEL_EXPORTER_OTLP_ENDPOINT`: URL to OTel Collector (`http://otel-collector.observability.svc.cluster.local:4317`).
-- `SERVICE_NAME`: The canonical service registry name (e.g., `healthcare-api`).
-- `NODE_ENV` / `ENVIRONMENT`: Target environment (`production`, `staging`, `development`).
-
----
-
-## 6. Storage, Data Retention, & Lifecycle Management
-
-### Retention Strategy
-
-| Data Type          | Storage Backend      | Retention Period | Compaction / Pruning   |
-|--------------------|----------------------|------------------|------------------------|
-| Metrics            | Prometheus TSDB      | 30 Days          | Built-in TSDB Blocks   |
-| Structured Logs    | Grafana Loki (TSDB)  | 14 Days          | 24h Table Periods      |
-| Distributed Traces | Tempo (Object Store) | 7 Days           | Block Retention Sweeps |
-
-- **Loki Partitioning:** Chunks are partitioned every 24 hours. Old chunks drop automatically based on the `reject_old_samples_max_age: 168h` and retention sweeps.
-- **Volume Types:** Both Prometheus and Loki run as Kubernetes StatefulSet resources backed by fast SSD-backed block storage (ReadWriteOnce PVCs).
-
----
-
-## 7. Operational Runbook & Troubleshooting
-
-### Scenario 1: Missing Trace Spans
-
-- **Check:** Verify that `initTracing()` runs on line 1 of the application entry point, before any third-party HTTP modules are loaded.
-- **Verification:** Run `kubectl logs <pod-name> -n default` to confirm the OpenTelemetry SDK initialized without gRPC connection drops to port 4317.
-
-### Scenario 2: High Memory on Prometheus Pods
-
-- **Check:** Suspected high cardinality.
-- **Mitigation:** Run the following query in Prometheus:
-
-```promql
-topk(10, count by (__name__)({__name__=~".+"}))
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [loki]
 ```
 
-Inspect metric names with excessive series. Ensure no developers registered endpoint routes with raw UUIDs instead of route templates (e.g., ensure `/appointments/:id` is registered, not `/appointments/123e4567-e89b`).
+### 4.2 Loki TSDB Storage Configuration (`loki-config.yaml`)
 
-### Scenario 3: Loki Rejecting Log Streams
+Configured to handle dynamic fields as **structured metadata** rather than indexing them into streams, which prevents out-of-memory errors.
 
-- **Cause:** Log lines exceeding maximum byte size or timestamps sent out-of-order.
-- **Mitigation:** Ensure applications do not dump binary payloads or large base64 strings into log statements. Set `max_line_size: 256kb` in `loki-config.yaml`.
+```yaml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  allow_structured_metadata: true
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  max_line_size: 256kb
+```
+
+### 4.3 Prometheus Pull Scraping (`prometheus.yml`)
+
+Configured for Kubernetes pod auto-discovery. Any NestJS pod annotated with `prometheus.io/scrape: "true"` is registered automatically.
+
+```yaml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "otel-collector"
+    static_configs:
+      - targets: ["otel-collector.observability.svc.cluster.local:8889"]
+
+  - job_name: "kubernetes-pods"
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        action: replace
+        target_label: service_name
+```
 
 ---
 
-## 8. Summary
+## 5. Kubernetes Deployment Manifests
 
-This observability design ensures that every service in the Healthcare Platform emits telemetry through a **single, standardized, low-overhead pipeline** while preserving the ability to correlate events across service boundaries via W3C Trace Context. The strict cardinality safeguards, retention policies, and polyglot integration matrix make the system scalable, maintainable, and production-ready.
+The observability stack runs within its own namespace (`observability`) as a combination of multi-replica deployments and stateful sets backed by PersistentVolumeClaims.
+
+```text
+               KUBERNETES DEPLOYMENT BOUNDARIES
+
+ [Namespace: default]                      [Namespace: observability]
++-------------------------------+         +-------------------------------------+
+| Pod: healthcare-api           |         | Deployment: otel-collector          |
+|  - Ports: 5501 (HTTP)         | OTLP    |  - Replicas: 2                      |
+|  - Annotations:               +-------->|  - Ports: 4317 (gRPC), 8889 (Prom)  |
+|      prometheus.io/scrape=true|         +------+------------------+-----------+
+|                               |                |                  |
+| Pod: healthcare-notification  |                | Push Logs        | Push Traces
+|  - Ports: 5502 (HTTP)         |                v                  v
+|  - Annotations:               |         +--------------+   +------------------+
+|      prometheus.io/scrape=true|         | StatefulSet: |   | StatefulSet:     |
++---------------+---------------+         | Loki         |   | Tempo            |
+                |                         | - PVC: 100Gi |   | - PVC: 50Gi      |
+                | Pull Scrape             +--------------+   +------------------+
+                v                                |                     |
++-------------------------------+                | Data Source         | Data Source
+| StatefulSet: Prometheus       |                v                     v
+|  - Replicas: 1                +-------->+-------------------------------------+
+|  - PVC: 100Gi                 |         | Deployment: Grafana                 |
+|  - RBAC: Node/Pod Explorer    |         |  - Dashboards & Trace Viewer        |
++-------------------------------+         +-------------------------------------+
+```
+
+### 5.1 Resource Requests & Limits Allocation
+
+| Service        | Kind                     | Storage         | CPU Req / Limit | Memory Req / Limit |
+|----------------|--------------------------|-----------------|-----------------|--------------------|
+| OTel Collector | Deployment (2 replicas)  | None (Stateless)| 250m / 1000m    | 512Mi / 1Gi        |
+| Prometheus     | StatefulSet (1 replica)  | 100Gi (GP3/SSD) | 500m / 2000m    | 2Gi / 8Gi          |
+| Loki           | StatefulSet (1 replica)  | 100Gi (GP3/SSD) | 500m / 2000m    | 1Gi / 4Gi          |
+| Grafana        | Deployment (1 replica)   | 10Gi (Config)   | 100m / 500m     | 256Mi / 1Gi        |
+
+---
+
+## 6. Verification, Health Checks, & CI/CD Pipeline
+
+To ensure deployments maintain observability compliance, all pull requests across `healthcare-api` and `healthcare-notification-api` run continuous validation checks:
+
+```text
+[PR Trigger] -> [pnpm test:unit] -> [pnpm test:integration] -> [pnpm test:e2e] -> [Container Smoke Test]
+                                                                                        |
+                                                               +------------------------+
+                                                               |
+                                                               v
+                                                - Start service container
+                                                - Await HTTP 200 on /health
+                                                - Verify GET /metrics returns:
+                                                  * healthcare_http_requests_total
+                                                  * process_cpu_user_seconds_total
+                                                - Validate JSON stdout log structure
+```
+
+### Local Development Smoke Check
+
+Developers can verify telemetry locally using the project's root `Makefile`:
+
+```bash
+# Spin up the local observability infrastructure
+docker compose -f docker-compose.observability.yml up -d
+
+# Verify metrics endpoint on healthcare-api
+curl -s http://127.0.0.1:5501/metrics | grep healthcare_http_requests_total
+
+# Inspect correlated trace in stdout
+curl -X POST http://127.0.0.1:5501/appointments \
+  -H "Content-Type: application/json" \
+  -d '{"doctorId":"doc-1","slot":"2026-10-01T09:00:00Z"}'
+```
