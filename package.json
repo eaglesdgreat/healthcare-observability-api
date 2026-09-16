@@ -26,10 +26,14 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "@eslint/js": "^10.0.1",
     "@nestjs/common": "^12.0.1",
     "@nestjs/core": "^12.0.1",
     "@nestjs/observe": "^0.1.8",
     "@nestjs/platform-express": "^12.0.1",
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typescript-eslint": "^8.70.0"
@@ -57,8 +61,11 @@
     "vitest": "^4.1.2"
   },
   "lint-staged": {
-    "**/*.{ts,js}": [
-      "eslint --fix",
+    "*.{ts,js,mjs}": [
+      "eslint --fix --no-warn-ignored",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
       "prettier --write"
     ]
   }
