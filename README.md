@@ -1,114 +1,230 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Healthcare Observability Platform (`healthcare-observability`)
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Centralized observability infrastructure and shared NestJS telemetry libraries for the healthcare microservices ecosystem (`healthcare-api`, `healthcare-notification-api`). This platform standardizes **Distributed Tracing (OpenTelemetry)**, **Metrics (Prometheus)**, and **Structured Logging (Pino + Grafana Loki)** across all services.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+---
 
-## Description
+## Repository Structure
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ pnpm install
+```text
+healthcare-observability/
+├── packages/
+│   └── nestjs-observability/       # Shared NestJS module (tracing, logging, metrics)
+│       ├── src/
+│       ├── package.json
+│       └── tsconfig.json
+├── infra/
+│   ├── otel-collector/             # OpenTelemetry Collector pipelines
+│   ├── prometheus/                 # Prometheus scrape configs & alert rules
+│   ├── loki/                       # Grafana Loki TSDB schema configs
+│   ├── grafana/                    # Provisioned datasources & pre-built dashboards
+│   └── k8s/                        # Production Kubernetes manifests
+├── docker-compose.observability.yml # Local telemetry stack (Collector, Prometheus, Loki, Grafana)
+├── Makefile                        # Automation recipes for local dev & testing
+└── README.md
 ```
 
-## Compile and run the project
+---
+
+## Prerequisites & Required Packages
+
+### System Tools
+
+- **Node.js**: `v24.x` (LTS)
+- **pnpm**: `v9.x` or `v10.x` (`corepack enable && corepack use pnpm@latest`)
+- **Docker & Docker Compose**: Engine `24.x+`, Compose `v2.x+`
+- **Make**: GNU Make
+
+### Core Packages (`packages/nestjs-observability`)
+
+- **Tracing**: `@opentelemetry/sdk-node`, `@opentelemetry/auto-instrumentations-node`, `@opentelemetry/exporter-trace-otlp-grpc`, `@opentelemetry/api`, `@opentelemetry/resources`, `@opentelemetry/semantic-conventions`
+- **Logging**: `nestjs-pino`, `pino`, `pino-http`
+- **Metrics**: `prom-client`
+
+---
+
+## Quickstart: Local Environment Setup
+
+### 1. Clone & Install Dependencies
 
 ```bash
-# development
-$ pnpm run start
+git clone https://github.com/eaglesdgreat/healthcare-observability.git
+cd healthcare-observability
 
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+# Install dependencies across all packages using pnpm workspace
+pnpm install --frozen-lockfile
 ```
 
-## Run tests
+### 2. Build the Shared NestJS Library
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+# Compile TypeScript library to dist/
+pnpm --filter @healthcare/nestjs-observability run build
 ```
 
-## Deployment
+---
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## Running the Observability Stack
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### Option A: Local Containerized Telemetry Stack (Docker Compose)
+
+Spin up OpenTelemetry Collector, Prometheus, Loki, and Grafana:
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+# Start all observability components in background
+make obs-up
+
+# Or via direct docker command:
+docker compose -f docker-compose.observability.yml up -d
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+#### Exposed Ports & Access Points
 
-## Observability
+| Service | Port | Endpoint / Purpose | Credentials |
+| --- | --- | --- | --- |
+| **Grafana UI** | `3000` | `http://localhost:3000` | `admin` / `admin` |
+| **Prometheus UI** | `9090` | `http://localhost:9090` | None |
+| **Loki API** | `3100` | `http://localhost:3100/ready` | None |
+| **OTel Collector (gRPC)** | `4317` | `localhost:4317` (Trace/Log ingest) | None |
+| **OTel Collector (HTTP)** | `4318` | `localhost:4318` (Trace/Log ingest) | None |
+| **OTel Collector Metrics** | `8889` | `http://localhost:8889/metrics` | None |
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+```bash
+# Check running containers and health checks
+make obs-status
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+# Stop the stack and purge volumes
+make obs-down
+```
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+---
 
-## Resources
+### Option B: Running Downstream Services Locally (`healthcare-api`)
 
-Check out a few resources that may come in handy when working with NestJS:
+When developing locally on your host machine while the observability containers run:
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+1. **Link or Install the Shared Package in Target Service:**
 
-## Support
+```bash
+cd ~/Desktop/projects/healthcare-api
+pnpm add ../healthcare-observability/packages/nestjs-observability
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+2. **Configure Environment Variables:**
 
-## Stay in touch
+Create or update `.env` in the target service:
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```env
+SERVICE_NAME=healthcare-api
+NODE_ENV=development
+PORT=5501
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+LOG_LEVEL=info
+```
 
-## License
+3. **Bootstrap Tracing in `main.ts`:**
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+```typescript
+import { initTracing } from '@healthcare/nestjs-observability';
+
+// Must be executed before any Nest or Express import
+initTracing(process.env.SERVICE_NAME || 'healthcare-api');
+
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { Logger } from 'nestjs-pino';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
+  await app.listen(process.env.PORT || 5501);
+}
+bootstrap();
+```
+
+4. **Start the Service:**
+
+```bash
+pnpm run start:dev
+```
+
+---
+
+## Makefile Cheatsheet
+
+```bash
+make help            # List all available targets
+make build           # Build shared packages
+make lint            # Run ESLint across packages
+make test            # Run unit tests across packages
+make obs-up          # Start Docker Compose observability stack
+make obs-down        # Stop and remove observability containers
+make obs-logs        # Tail all telemetry infrastructure logs
+make smoke-test      # Verify metrics, collector, and Loki connectivity
+```
+
+---
+
+## Verification & Smoke Testing
+
+Run the included verification suite to confirm data ingestion across all three pillars:
+
+```bash
+# 1. Verify Prometheus can reach your service /metrics
+curl -s http://localhost:9090/api/v1/targets | grep healthcare
+
+# 2. Verify OpenTelemetry Collector is accepting gRPC connections
+nc -zv localhost 4317
+
+# 3. Verify Loki TSDB readiness
+curl -s http://localhost:3100/ready
+
+# 4. Trigger an HTTP request on your service and search logs in Loki
+curl -i http://localhost:5501/health
+```
+
+In Grafana (`http://localhost:3000`):
+
+1. Navigate to **Explore**.
+2. Select datasource **Loki** and query: `{service_name="healthcare-api"}`.
+3. Click a log entry and click the **TraceID** link to jump directly to the correlated distributed trace.
+
+---
+
+## Deployment: Kubernetes
+
+Deploy the stack into the `observability` namespace:
+
+```bash
+# 1. Create namespace and RBAC permissions
+kubectl apply -f infra/k8s/00-base-rbac.yaml
+
+# 2. Deploy OpenTelemetry Collector
+kubectl apply -f infra/k8s/01-otel-collector.yaml
+
+# 3. Deploy Loki (TSDB with PVC)
+kubectl apply -f infra/k8s/02-loki.yaml
+
+# 4. Deploy Prometheus (Dynamic Pod auto-discovery)
+kubectl apply -f infra/k8s/03-prometheus.yaml
+```
+
+To configure microservices for auto-scraping in Kubernetes, attach the following annotations to each service's deployment manifest:
+
+```yaml
+spec:
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "5501" # Target service port
+```
+
+---
+
+## Observability Golden Rules
+
+- **No Dynamic Values in Metric Labels:** Never inject `userId`, `appointmentId`, or `traceId` into Prometheus metrics. Use route templates (`/appointments/:id`) only.
+- **JSON to stdout:** Do not ship logs over network sockets inside the app runtime. Always stream structured JSON to `stdout`.
+- **Propagate W3C Context:** Ensure all outbound HTTP calls and message queue events carry standard `traceparent` headers.
