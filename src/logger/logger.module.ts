@@ -40,14 +40,14 @@ export class ObservabilityLoggerModule {
           }
         },
         serializers: {
-          // req: (req) => ({
-          //   id: req.id,
-          //   method: req.method,
-          //   url: req.url,
-          // }),
-          // res: (res) => ({
-          //   statusCode: res.statusCode,
-          // }),
+          req: (req) => ({
+            id: (req as { id: string }).id,
+            method: (req as { method: string }).method,
+            url: (req as { url: string }).url,
+          }),
+          res: (res) => ({
+            statusCode: (res as { statusCode: number }).statusCode,
+          }),
         },
       },
     })
