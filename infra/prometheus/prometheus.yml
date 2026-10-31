@@ -13,3 +13,10 @@ scrape_configs:
   - job_name: otel-collector
     static_configs:
       - targets: ['otel-collector:8888']
+
+  - job_name: healthcare-notification-api
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ['host.docker.internal:5502']
+        labels:
+          service_name: healthcare-notification-api
