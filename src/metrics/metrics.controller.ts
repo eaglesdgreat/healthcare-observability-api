@@ -1,6 +1,6 @@
 import { Controller, Get, Res } from '@nestjs/common'
 import { type Response } from 'express'
-import { METRICS_REGISTRY } from '@/metrics/metrics.constants.js'
+import { METRICS_REGISTRY } from './metrics.constants.js'
 
 @Controller('metrics')
 export class MetricsController {

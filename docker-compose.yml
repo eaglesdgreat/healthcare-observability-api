@@ -1,63 +1,112 @@
 services:
-  ms-notification-api:
-    container_name: ms-notification-api
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.ms-notification-api.rule=PathPrefix(`/notifications`)"
-    user: root
+  observability-api:
     build:
       context: .
-      target: base # Targets the first stage of the Dockerfile for dev
-    volumes:
-      - ./:/app:cached
-      # The "Volume Trick": prevents local node_modules from overwriting container ones
-      - /app/node_modules
-    ports:
-      - 5502:5502
-    env_file:
-      - ./.env
-    links:
-      - ms-notification-db
-      - ms-notification-redis
+      target: release
     environment:
-      - NODE_ENV=dev
-      - PORT=5502
-      # Override localhost values so the app reaches the containers on the compose network
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@ms-notification-db:5432/${POSTGRES_DB}?schema=public
-      - REDIS_HOST=ms-notification-redis
-      - REDIS_PORT=6379
-      # Use polling for file-watchers (helps on Windows hosts with Docker bind mounts)
-      - CHOKIDAR_USEPOLLING=true
-      - CHOKIDAR_INTERVAL=1000
-      - WATCHPACK_POLLING=true
-      # TypeScript's watch mode does NOT respect CHOKIDAR_USEPOLLING.
-      # Force polling for Windows Docker bind mounts.
-      - TSC_WATCHFILE=DynamicPriorityPolling
-    # Wait for DB and Redis to be ready before running migrations + Nest
-    command: >
-      sh -c "./shell/wait-for.sh ms-notification-db:5432 -- ./shell/wait-for.sh ms-notification-redis:6379 -- sh ./shell/start-dev.sh"
-
-  ms-notification-db:
-    container_name: ms-notification-db
-    image: postgres:16-alpine
+      NODE_ENV: production
+      PORT: 3000
+      SERVICE_NAME: healthcare-observability-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      LOG_LEVEL: info
     ports:
-      - 5406:5432
-    expose:
-      - 5432
-    env_file:
-      - ./.env
+      - '127.0.0.1:3001:3000'
+    depends_on:
+      - otel-collector
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    command: ['--config=/etc/otelcol-contrib/config.yaml']
     volumes:
-      - ms-notification-db_vol:/var/lib/postgresql/data
-    restart: always
-
-  ms-notification-redis:
-    container_name: ms-notification-redis
-    image: redis:7-alpine
+      - ./infra/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
-      - 5407:6379
-    expose:
-      - 6379
-    restart: always
+      - '127.0.0.1:4317:4317'
+      - '127.0.0.1:4318:4318'
+    depends_on:
+      - tempo
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - '127.0.0.1:9090:9090'
+    depends_on:
+      - observability-api
+      - otel-collector
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.4.2
+    command: ['-config.file=/etc/loki/config.yaml']
+    volumes:
+      - ./infra/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - '127.0.0.1:3100:3100'
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.7.5
+    command:
+      ['run', '/etc/alloy/config.alloy', '--storage.path=/var/lib/alloy/data']
+    volumes:
+      - ./infra/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.7.2
+    command: ['-config.file=/etc/tempo/config.yaml']
+    volumes:
+      - ./infra/tempo/config.yaml:/etc/tempo/config.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - '127.0.0.1:3200:3200'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    restart: unless-stopped
 
 volumes:
-  ms-notification-db_vol:
+  alloy-data:
+  grafana-data:
+  loki-data:
+  prometheus-data:
+  tempo-data:

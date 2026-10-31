@@ -1,9 +1,11 @@
 import { DynamicModule, Module } from '@nestjs/common'
 import { LoggerModule } from 'nestjs-pino'
 import { trace, context } from '@opentelemetry/api'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
 export interface LoggerConfig {
   serviceName: string
+  serviceVersion?: string
   environment?: string
   logLevel?: string
 }
@@ -19,11 +21,13 @@ export class ObservabilityLoggerModule {
       pinoHttp: {
         level: logLevel,
         messageKey: 'message',
-        timestamp: () => `,"time":${Date.now()}`,
         base: {
           service: {
             name: config.serviceName,
-            version: process.env.npm_package_version || '1.0.0',
+            version:
+              config.serviceVersion ??
+              process.env.npm_package_version ??
+              '1.0.0',
           },
           environment,
         },
@@ -37,17 +41,23 @@ export class ObservabilityLoggerModule {
           return {
             traceId: spanContext.traceId,
             spanId: spanContext.spanId,
+            traceFlags: spanContext.traceFlags,
           }
         },
         serializers: {
-          req: (req) => ({
-            id: (req as { id: string }).id,
-            method: (req as { method: string }).method,
-            url: (req as { url: string }).url,
-          }),
-          res: (res) => ({
-            statusCode: (res as { statusCode: number }).statusCode,
-          }),
+          req: (
+            req: IncomingMessage & {
+              id?: string
+              route?: { path?: string }
+            },
+          ) => {
+            return {
+              id: req.id,
+              method: req.method,
+              route: req.route?.path ?? 'unmatched',
+            }
+          },
+          res: (res: ServerResponse) => ({ statusCode: res.statusCode }),
         },
       },
     })

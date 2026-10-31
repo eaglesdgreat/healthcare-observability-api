@@ -1,41 +1,42 @@
-import 'reflect-metadata';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { Test, TestingModule } from '@nestjs/testing';
-import { Response } from 'express';
-import { MetricsController } from '@/metrics/metrics.controller.js';
-import { METRICS_REGISTRY } from '@/metrics/metrics.constants.js';
+import 'reflect-metadata'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { Test, TestingModule } from '@nestjs/testing'
+import { Response } from 'express'
+import { MetricsController } from '@/metrics/metrics.controller.js'
+import { METRICS_REGISTRY } from '@/metrics/metrics.constants.js'
 
 describe('MetricsController', () => {
-  let controller: MetricsController;
+  let controller: MetricsController
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MetricsController],
-    }).compile();
+    }).compile()
 
-    controller = module.get<MetricsController>(MetricsController);
-  });
+    controller = module.get<MetricsController>(MetricsController)
+  })
 
   it('should be defined', () => {
-    expect(controller).toBeDefined();
-  });
+    expect(controller).toBeDefined()
+  })
 
   it('should return 200 with Prometheus-formatted content', async () => {
+    const setHeader = vi.fn()
+    const status = vi.fn().mockReturnThis()
+    const send = vi.fn()
     const mockResponse = {
-      setHeader: vi.fn(),
-      status: vi.fn().mockReturnThis(),
-      send: vi.fn(),
-    } as unknown as Response;
+      setHeader,
+      status,
+      send,
+    } as unknown as Response
 
-    await controller.getMetrics(mockResponse);
+    await controller.getMetrics(mockResponse)
 
-    expect(mockResponse.setHeader).toHaveBeenCalledWith(
+    expect(setHeader).toHaveBeenCalledWith(
       'Content-Type',
       METRICS_REGISTRY.contentType,
-    );
-    expect(mockResponse.status).toHaveBeenCalledWith(200);
-    expect(mockResponse.send).toHaveBeenCalledWith(
-      expect.stringContaining('healthcare_'),
-    );
-  });
-});
+    )
+    expect(status).toHaveBeenCalledWith(200)
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('healthcare_'))
+  })
+})
