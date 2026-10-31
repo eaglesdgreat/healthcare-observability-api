@@ -23,6 +23,34 @@ pnpm run test:integration
 pnpm run test:e2e
 ```
 
+## Continuous integration
+
+The GitHub Actions workflow runs for every branch push, pull requests targeting
+`main`, and manual dispatch. Each stage gates the next so failures stop the
+pipeline early:
+
+1. TypeScript typecheck, then ESLint.
+2. Unit tests.
+3. Integration tests.
+4. End-to-end tests.
+5. Build and start the production bundle; poll `/health`, validate `/metrics`
+   (including request and Node.js process metrics), and verify structured
+   request logs contain valid trace and span IDs.
+6. Build the release Docker image.
+
+The CI smoke check intentionally runs before the final Docker image build and
+does not require external databases, credentials, or telemetry backends. The
+Compose stack has its own container health check and can be verified locally:
+
+```sh
+make obs-up
+make smoke-test
+make obs-status
+```
+
+`make smoke-test` checks the API health and metrics endpoints and confirms
+Prometheus can scrape the API. Stop the local stack with `make obs-down`.
+
 The package exports its reusable NestJS module and tracing bootstrap from
 `@healthcare/nestjs-observability`. Build it before installing the local
 directory from another service:
