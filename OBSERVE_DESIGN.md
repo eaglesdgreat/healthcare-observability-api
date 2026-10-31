@@ -90,16 +90,24 @@ To ensure uniformity across all services without copy-pasting instrumentation lo
 Must execute **before** any database drivers, Express, or NestJS modules are imported into memory:
 
 ```typescript
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
-import { Resource } from '@opentelemetry/resources';
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+import { NodeSDK } from '@opentelemetry/sdk-node'
+import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc'
+import { Resource } from '@opentelemetry/resources'
+import {
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_VERSION,
+} from '@opentelemetry/semantic-conventions'
 
-export function bootstrapTelemetry(serviceName: string, serviceVersion: string = '1.0.0') {
+export function bootstrapTelemetry(
+  serviceName: string,
+  serviceVersion: string = '1.0.0',
+) {
   const exporter = new OTLPTraceExporter({
-    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://otel-collector.observability.svc.cluster.local:4317',
-  });
+    url:
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ||
+      'http://otel-collector.observability.svc.cluster.local:4317',
+  })
 
   const sdk = new NodeSDK({
     resource: new Resource({
@@ -114,13 +122,13 @@ export function bootstrapTelemetry(serviceName: string, serviceVersion: string =
         '@opentelemetry/instrumentation-dns': { enabled: false },
       }),
     ],
-  });
+  })
 
-  sdk.start();
+  sdk.start()
 
   process.on('SIGTERM', () => {
-    sdk.shutdown().finally(() => process.exit(0));
-  });
+    sdk.shutdown().finally(() => process.exit(0))
+  })
 }
 ```
 
@@ -129,9 +137,9 @@ export function bootstrapTelemetry(serviceName: string, serviceVersion: string =
 Injects the active OpenTelemetry context into the JSON payload emitted to `stdout`.
 
 ```typescript
-import { DynamicModule, Module } from '@nestjs/common';
-import { LoggerModule } from 'nestjs-pino';
-import { trace, context } from '@opentelemetry/api';
+import { DynamicModule, Module } from '@nestjs/common'
+import { LoggerModule } from 'nestjs-pino'
+import { trace, context } from '@opentelemetry/api'
 
 @Module({})
 export class AppObservabilityLoggerModule {
@@ -140,7 +148,10 @@ export class AppObservabilityLoggerModule {
       pinoHttp: {
         level: process.env.LOG_LEVEL || 'info',
         base: {
-          service: { name: serviceName, version: process.env.npm_package_version || '1.0.0' },
+          service: {
+            name: serviceName,
+            version: process.env.npm_package_version || '1.0.0',
+          },
           env: process.env.NODE_ENV || 'production',
         },
         messageKey: 'message',
@@ -148,17 +159,17 @@ export class AppObservabilityLoggerModule {
           level: (label) => ({ severity: label.toUpperCase() }),
         },
         mixin: () => {
-          const activeSpan = trace.getSpan(context.active());
-          if (!activeSpan) return {};
-          const spanContext = activeSpan.spanContext();
+          const activeSpan = trace.getSpan(context.active())
+          if (!activeSpan) return {}
+          const spanContext = activeSpan.spanContext()
           return {
             traceId: spanContext.traceId,
             spanId: spanContext.spanId,
             traceFlags: spanContext.traceFlags,
-          };
+          }
         },
       },
-    });
+    })
   }
 }
 ```
@@ -168,31 +179,36 @@ export class AppObservabilityLoggerModule {
 Maintains the pull model by serving Prometheus-compliant metrics over `/metrics` with standardized labels.
 
 ```typescript
-import { Controller, Get, Res } from '@nestjs/common';
-import { Response } from 'express';
-import { register, collectDefaultMetrics, Counter, Histogram } from 'prom-client';
+import { Controller, Get, Res } from '@nestjs/common'
+import { Response } from 'express'
+import {
+  register,
+  collectDefaultMetrics,
+  Counter,
+  Histogram,
+} from 'prom-client'
 
-collectDefaultMetrics({ prefix: 'healthcare_' });
+collectDefaultMetrics({ prefix: 'healthcare_' })
 
 export const httpRequestDuration = new Histogram({
   name: 'healthcare_http_request_duration_seconds',
   help: 'Duration of HTTP requests in seconds',
   labelNames: ['method', 'route', 'status_code'],
   buckets: [0.01, 0.05, 0.1, 0.3, 0.5, 1, 2, 5],
-});
+})
 
 export const httpRequestsTotal = new Counter({
   name: 'healthcare_http_requests_total',
   help: 'Total count of HTTP requests handled',
   labelNames: ['method', 'route', 'status_code'],
-});
+})
 
 @Controller('metrics')
 export class MetricsController {
   @Get()
   async getMetrics(@Res() res: Response) {
-    res.setHeader('Content-Type', register.contentType);
-    res.send(await register.metrics());
+    res.setHeader('Content-Type', register.contentType)
+    res.send(await register.metrics())
   }
 }
 ```
@@ -230,11 +246,11 @@ When a patient books an appointment in `healthcare-api`, triggering an alert dis
 
 ### Data Pipeline Matrix
 
-| Pillar  | Collection Mechanism       | Pipeline Protocol              | Target Ingestor          | Indexing Rules                                                          |
-|---------|----------------------------|--------------------------------|--------------------------|-------------------------------------------------------------------------|
-| Traces  | In-app OTel NodeSDK        | OTLP via gRPC (port 4317)      | OTel Collector → Tempo   | Low-cardinality span names, high-cardinality tags in span attributes    |
-| Metrics | Pull scraping via HTTP     | PromQL text format (`/metrics`) | Prometheus (port 9090)   | Label sets limited to `method`, `route`, `status_code`, `env`           |
-| Logs    | Node.js `stdout`           | JSON Lines collected via OTel/Alloy | Grafana Loki (port 3100) | Indexed labels: `service`, `env`, `severity`. IDs are structured metadata |
+| Pillar  | Collection Mechanism   | Pipeline Protocol                   | Target Ingestor          | Indexing Rules                                                            |
+| ------- | ---------------------- | ----------------------------------- | ------------------------ | ------------------------------------------------------------------------- |
+| Traces  | In-app OTel NodeSDK    | OTLP via gRPC (port 4317)           | OTel Collector → Tempo   | Low-cardinality span names, high-cardinality tags in span attributes      |
+| Metrics | Pull scraping via HTTP | PromQL text format (`/metrics`)     | Prometheus (port 9090)   | Label sets limited to `method`, `route`, `status_code`, `env`             |
+| Logs    | Node.js `stdout`       | JSON Lines collected via OTel/Alloy | Grafana Loki (port 3100) | Indexed labels: `service`, `env`, `severity`. IDs are structured metadata |
 
 ---
 
@@ -272,7 +288,7 @@ exporters:
 
   prometheus:
     endpoint: 0.0.0.0:8889
-    namespace: "otel"
+    namespace: 'otel'
 
   otlp/tempo:
     endpoint: tempo.observability.svc.cluster.local:4317
@@ -340,11 +356,11 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "otel-collector"
+  - job_name: 'otel-collector'
     static_configs:
-      - targets: ["otel-collector.observability.svc.cluster.local:8889"]
+      - targets: ['otel-collector.observability.svc.cluster.local:8889']
 
-  - job_name: "kubernetes-pods"
+  - job_name: 'kubernetes-pods'
     kubernetes_sd_configs:
       - role: pod
     relabel_configs:
@@ -355,7 +371,8 @@ scrape_configs:
         action: replace
         target_label: __metrics_path__
         regex: (.+)
-      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+      - source_labels:
+          [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
         action: replace
         regex: ([^:]+)(?::\d+)?;(\d+)
         replacement: $1:$2
@@ -402,46 +419,63 @@ The observability stack runs within its own namespace (`observability`) as a com
 
 ### 5.1 Resource Requests & Limits Allocation
 
-| Service        | Kind                     | Storage         | CPU Req / Limit | Memory Req / Limit |
-|----------------|--------------------------|-----------------|-----------------|--------------------|
-| OTel Collector | Deployment (2 replicas)  | None (Stateless)| 250m / 1000m    | 512Mi / 1Gi        |
-| Prometheus     | StatefulSet (1 replica)  | 100Gi (GP3/SSD) | 500m / 2000m    | 2Gi / 8Gi          |
-| Loki           | StatefulSet (1 replica)  | 100Gi (GP3/SSD) | 500m / 2000m    | 1Gi / 4Gi          |
-| Grafana        | Deployment (1 replica)   | 10Gi (Config)   | 100m / 500m     | 256Mi / 1Gi        |
+| Service        | Kind                    | Storage          | CPU Req / Limit | Memory Req / Limit |
+| -------------- | ----------------------- | ---------------- | --------------- | ------------------ |
+| OTel Collector | Deployment (2 replicas) | None (Stateless) | 250m / 1000m    | 512Mi / 1Gi        |
+| Prometheus     | StatefulSet (1 replica) | 100Gi (GP3/SSD)  | 500m / 2000m    | 2Gi / 8Gi          |
+| Loki           | StatefulSet (1 replica) | 100Gi (GP3/SSD)  | 500m / 2000m    | 1Gi / 4Gi          |
+| Grafana        | Deployment (1 replica)  | 10Gi (Config)    | 100m / 500m     | 256Mi / 1Gi        |
 
 ---
 
 ## 6. Verification, Health Checks, & CI/CD Pipeline
 
-To ensure deployments maintain observability compliance, all pull requests across `healthcare-api` and `healthcare-notification-api` run continuous validation checks:
+The repository GitHub Actions workflow runs on every branch push, pull requests
+targeting `main`, and manual dispatch. Jobs are sequentially gated so an earlier
+failure prevents later work:
 
 ```text
-[PR Trigger] -> [pnpm test:unit] -> [pnpm test:integration] -> [pnpm test:e2e] -> [Container Smoke Test]
-                                                                                        |
-                                                               +------------------------+
-                                                               |
-                                                               v
-                                                - Start service container
-                                                - Await HTTP 200 on /health
-                                                - Verify GET /metrics returns:
-                                                  * healthcare_http_requests_total
-                                                  * process_cpu_user_seconds_total
-                                                - Validate JSON stdout log structure
+[push / pull request / manual dispatch]
+  -> [Typecheck] -> [Lint]
+  -> [Unit tests]
+  -> [Integration tests]
+  -> [End-to-end tests]
+  -> [Production smoke and health checks]
+  -> [Release Docker build]
 ```
 
-### Local Development Smoke Check
+### CI smoke checks
 
-Developers can verify telemetry locally using the project's root `Makefile`:
+After all test suites pass, CI builds the production bundle and starts the
+application with no external service credentials or backend dependencies. It
+polls `GET /health` for up to 60 seconds, validates the healthy response, then
+checks `GET /metrics` for HTTP request and Node.js process metrics. It also
+parses the emitted request log as JSON and verifies the service name, HTTP
+status, and W3C trace/span ID shapes. Only after these checks pass does CI
+build the release Docker image. The container build is deliberately last; it
+does not push or publish an image.
+
+The workflow uses Node.js 24 and the pnpm version pinned in `package.json`.
+Typecheck, unit, integration, and e2e jobs require no database or application
+secrets. The GitHub Actions token is restricted to read-only repository content.
+
+### Local development health and smoke checks
 
 ```bash
-# Spin up the local observability infrastructure
-docker compose -f docker-compose.observability.yml up -d
+# Start the local observability stack (including its API health check)
+make obs-up
 
-# Verify metrics endpoint on healthcare-api
-curl -s http://127.0.0.1:5501/metrics | grep healthcare_http_requests_total
+# Check API health, Prometheus metrics, and scrape target
+make smoke-test
 
-# Inspect correlated trace in stdout
-curl -X POST http://127.0.0.1:5501/appointments \
-  -H "Content-Type: application/json" \
-  -d '{"doctorId":"doc-1","slot":"2026-10-01T09:00:00Z"}'
+# Inspect service status and logs
+make obs-status
+make obs-logs
+
+# Stop containers without removing persisted telemetry volumes
+make obs-down
 ```
+
+The Compose API container has a Docker health check against `/health`. The
+local smoke target additionally verifies `/metrics` and the Prometheus API
+target; it requires the Compose stack to be running.
