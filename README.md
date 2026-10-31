@@ -125,6 +125,15 @@ backends, and secret-managed credentials. Prometheus uses static Compose
 targets; Kubernetes service discovery and deployment manifests are not
 included in this repository yet.
 
+When the notification API is running in its Docker Compose stack with port
+`5502` published, Prometheus scrapes
+`http://host.docker.internal:5502/api/metrics` using the
+`healthcare-notification-api` job. The Prometheus container maps
+`host.docker.internal` to the Docker host gateway for Linux compatibility.
+Alloy discovers the API container through the shared Docker daemon and sends
+its JSON stdout logs to Loki. The notification API does not currently export
+OpenTelemetry traces; its request IDs do not represent distributed trace IDs.
+
 Run `make help` for shortcuts. `make obs-down` preserves named volumes; remove
 them explicitly with `docker compose down --volumes` when intentionally
 discarding local telemetry data.
