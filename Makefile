@@ -1,130 +1,62 @@
-default: start
+.DEFAULT_GOAL := help
+COMPOSE := docker compose
 
-project:=healthcare
-service:=ms-notification
-NODE_ENV:=dev
-COMMIT_HASH = $(shell git rev-parse --verify HEAD)
+.PHONY: help build lint typecheck test test-integration test-e2e format-check compose-config obs-up obs-down obs-status obs-logs smoke-test
 
-.PHONY: start
-start:
-	docker-compose -p ${project} up -d
+help:
+	@echo "build          Build the NestJS application"
+	@echo "lint           Run ESLint without modifying files"
+	@echo "typecheck      Run the TypeScript compiler"
+	@echo "test           Run unit tests"
+	@echo "test-integration Run HTTP/module integration tests"
+	@echo "test-e2e       Run end-to-end tests"
+	@echo "format-check   Verify Prettier formatting"
+	@echo "compose-config Validate Docker Compose configuration"
+	@echo "obs-up         Build and start the local observability stack"
+	@echo "obs-down       Stop the stack (keeps persisted volumes)"
+	@echo "obs-status     Show stack container status"
+	@echo "obs-logs       Follow stack logs"
+	@echo "smoke-test     Check API health, metrics and Prometheus targets"
 
-.PHONY: stop
-stop:
-	docker-compose -p ${project} down
-
-.PHONY: restart
-restart: stop start
-
-.PHONY: logs
-logs:
-	docker-compose -p ${project} logs -f ${service}-api
-
-.PHONY: logs-db
-logs-db:
-	docker-compose -p ${project} logs -f ${service}-db
-
-.PHONY: logs-redis
-logs-redis:
-	docker-compose -p ${project} logs -f ${service}-redis
-
-.PHONY: ps
-ps:
-	docker-compose -p ${project} ps
-
-.PHONY: build
 build:
-	docker-compose -p ${project} build --no-cache
+	pnpm run build
 
-.PHONY: clean
-clean: stop build start
+lint:
+	pnpm run lint
 
-.PHONY: install-all-packages-in-container
-install-all-packages-in-container:
-	docker-compose -p ${project} exec ${service}-api pnpm install
+typecheck:
+	pnpm run typecheck
 
-.PHONY: add
-add: install-package-in-container build
+test:
+	pnpm test
 
-.PHONY: install-package-in-container
-install-package-in-container:
-	docker-compose -p ${project} exec ${service}-api pnpm add ${package}
-
-.PHONY: add-dev
-add-dev: install-dev-package-in-container build
-
-.PHONY: install-dev-package-in-container
-install-dev-package-in-container: start
-	docker-compose -p ${project} exec ${service}-api pnpm add -D ${package}
-
-.PHONY: generate
-generate: start
-	docker-compose -p ${project} exec ${service}-api pnpm exec prisma generate
-
-.PHONY: migration-create
-migration-create: start
-	docker-compose -p ${project} exec ${service}-api pnpm exec prisma migrate dev --name ${name}
-
-.PHONY: migrate-local
-migrate-local:
-	pnpm exec prisma migrate deploy
-
-.PHONY: migrate-down
-migrate-down:
-	docker-compose -p ${project} exec ${service}-api pnpm exec prisma migrate reset --force
-
-.PHONY: migrate
-migrate: start
-	docker-compose -p ${project} exec ${service}-api pnpm exec prisma migrate deploy
-
-.PHONY: shell
-shell:
-	docker-compose -p ${project} exec ${service}-api sh
-
-.PHONY: psql
-psql:
-	docker-compose -p ${project} exec ${service}-db psql -U postgres -d healthcare_notification_db
-
-.PHONY: test
-test: start test-exec test-e2e test-integration
-
-.PHONY: test-exec
-test-exec:
-	docker-compose -p ${project} exec ${service}-api pnpm test -- --exit
-
-.PHONY: test-e2e
-test-e2e:
-	docker-compose -p ${project} exec ${service}-api pnpm test:e2e -- --exit
-
-.PHONY: test-integration
 test-integration:
-	docker-compose -p ${project} exec ${service}-api pnpm test:integration
+	pnpm run test:integration
 
-.PHONY: test-cov
-test-cov:
-	docker-compose -p ${project} exec ${service}-api pnpm test:cov
+test-e2e:
+	pnpm run test:e2e
 
-.PHONY: test-watch
-test-watch:
-	docker-compose -p ${project} exec ${service}-api pnpm test:watch
+format-check:
+	pnpm run format:check
 
-.PHONY: test-debug
-test-debug:
-	docker-compose -p ${project} exec ${service}-api pnpm test:debug
+compose-config:
+	$(COMPOSE) config --quiet
 
-.PHONY: lint-fix
-lint-fix: start
-	docker-compose -p ${project} exec ${service}-api pnpm lint:fix
+obs-up:
+	$(COMPOSE) up --build --detach
 
-.PHONY: commit-hash
-commit-hash:
-	@echo $(COMMIT_HASH)
+obs-down:
+	$(COMPOSE) down
 
-.PHONY: build-release
-build-release:
-	docker build --target release -t local/${service}:${COMMIT_HASH} .
+obs-status:
+	$(COMPOSE) ps
 
-.PHONY: run-release
-run-release:
-	docker run -d --name ${service}_${COMMIT_HASH} -p 5502:5502 local/${service}:${COMMIT_HASH}
-	docker logs -f ${service}_${COMMIT_HASH}
+obs-logs:
+	$(COMPOSE) logs --follow --tail=100
+
+smoke-test:
+	@curl --fail --silent --show-error http://localhost:3001/health >/dev/null
+	@curl --fail --silent --show-error http://localhost:3001/metrics | grep 'healthcare_http_requests_total' >/dev/null
+	@targets="$$(curl --fail --silent --show-error 'http://localhost:9090/api/v1/targets?state=active')"; \
+		printf '%s' "$$targets" | grep -Eq '"job":"healthcare-observability-api".*"health":"up"'
+	@echo "API health, metrics, and Prometheus scrape: OK"

@@ -1,24 +1,24 @@
 import 'reflect-metadata'
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { ExecutionContext, CallHandler } from '@nestjs/common'
-import { of, firstValueFrom } from 'rxjs'
-import { MetricsInterceptor } from '../src/metrics/metrics.interceptor'
+import { describe, it, expect, beforeEach } from 'vitest'
+import {
+  CallHandler,
+  ExecutionContext,
+  NotFoundException,
+} from '@nestjs/common'
+import { firstValueFrom, of, throwError } from 'rxjs'
+import { MetricsInterceptor } from '../src/metrics/metrics.interceptor.js'
 import {
   HTTP_REQUEST_DURATION,
   HTTP_REQUESTS_TOTAL,
-} from '../src/metrics/metrics.constants'
+} from '../src/metrics/metrics.constants.js'
 
 describe('MetricsInterceptor', () => {
   let interceptor: MetricsInterceptor
 
   beforeEach(() => {
     interceptor = new MetricsInterceptor()
-    vi.spyOn(HTTP_REQUEST_DURATION, 'observe')
-    vi.spyOn(HTTP_REQUESTS_TOTAL, 'inc')
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
+    HTTP_REQUEST_DURATION.reset()
+    HTTP_REQUESTS_TOTAL.reset()
   })
 
   it('should record metrics using route path template rather than raw dynamic values', async () => {
@@ -47,19 +47,27 @@ describe('MetricsInterceptor', () => {
       interceptor.intercept(mockExecutionContext, mockCallHandler),
     )
 
-    expect(HTTP_REQUESTS_TOTAL.inc).toHaveBeenCalledWith({
-      method: 'GET',
-      route: '/appointments/:id',
-      status_code: '200',
-    })
-
-    expect(HTTP_REQUEST_DURATION.observe).toHaveBeenCalledWith(
-      {
+    const requestMetrics = await HTTP_REQUESTS_TOTAL.get()
+    expect(requestMetrics.values).toContainEqual({
+      labels: {
         method: 'GET',
         route: '/appointments/:id',
         status_code: '200',
       },
-      expect.any(Number),
+      value: 1,
+    })
+
+    const durationMetrics = await HTTP_REQUEST_DURATION.get()
+    expect(durationMetrics.values).toContainEqual(
+      expect.objectContaining({
+        labels: {
+          method: 'GET',
+          route: '/appointments/:id',
+          status_code: '200',
+          le: '+Inf',
+        },
+        value: 1,
+      }),
     )
   })
 
@@ -77,7 +85,67 @@ describe('MetricsInterceptor', () => {
     )
 
     expect(result).toEqual({ rpcResult: true })
-    expect(HTTP_REQUESTS_TOTAL.inc).not.toHaveBeenCalled()
-    expect(HTTP_REQUEST_DURATION.observe).not.toHaveBeenCalled()
+    expect((await HTTP_REQUESTS_TOTAL.get()).values).toHaveLength(0)
+    expect((await HTTP_REQUEST_DURATION.get()).values).toHaveLength(0)
+  })
+
+  it('uses a bounded route and method label when no matched route exists', async () => {
+    const mockRequest = {
+      method: 'CUSTOM',
+      path: '/patients/123',
+    }
+    const mockResponse = { statusCode: 404 }
+    const mockExecutionContext = {
+      getType: () => 'http',
+      switchToHttp: () => ({
+        getRequest: () => mockRequest,
+        getResponse: () => mockResponse,
+      }),
+    } as unknown as ExecutionContext
+    const mockCallHandler: CallHandler = { handle: () => of(null) }
+
+    await firstValueFrom(
+      interceptor.intercept(mockExecutionContext, mockCallHandler),
+    )
+
+    expect((await HTTP_REQUESTS_TOTAL.get()).values).toContainEqual({
+      labels: {
+        method: 'OTHER',
+        route: 'unmatched',
+        status_code: '404',
+      },
+      value: 1,
+    })
+  })
+
+  it('records failed requests with the exception status code', async () => {
+    const mockExecutionContext = {
+      getType: () => 'http',
+      switchToHttp: () => ({
+        getRequest: () => ({
+          method: 'GET',
+          route: { path: '/appointments/:id' },
+        }),
+        getResponse: () => ({ statusCode: 200 }),
+      }),
+    } as unknown as ExecutionContext
+    const mockCallHandler: CallHandler = {
+      handle: () => throwError(() => new NotFoundException()),
+    }
+
+    await expect(
+      firstValueFrom(
+        interceptor.intercept(mockExecutionContext, mockCallHandler),
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException)
+
+    expect((await HTTP_REQUESTS_TOTAL.get()).values).toContainEqual({
+      labels: {
+        method: 'GET',
+        route: '/appointments/:id',
+        status_code: '404',
+      },
+      value: 1,
+    })
   })
 })

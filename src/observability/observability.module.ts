@@ -3,9 +3,10 @@ import { APP_INTERCEPTOR } from '@nestjs/core'
 import {
   ObservabilityLoggerModule,
   LoggerConfig,
-} from '@/logger/logger.module.js'
-import { MetricsController } from '@/metrics/metrics.controller.js'
-import { MetricsInterceptor } from '@/metrics/metrics.interceptor.js'
+} from '../logger/logger.module.js'
+import { MetricsController } from '../metrics/metrics.controller.js'
+import { MetricsInterceptor } from '../metrics/metrics.interceptor.js'
+import { TelemetryLifecycleService } from '../tracing/telemetry-lifecycle.service.js'
 
 export type ObservabilityModuleOptions = LoggerConfig
 
@@ -21,8 +22,8 @@ export class ObservabilityModule {
           provide: APP_INTERCEPTOR,
           useClass: MetricsInterceptor,
         },
+        TelemetryLifecycleService,
       ],
-      exports: [ObservabilityLoggerModule],
     }
   }
 }

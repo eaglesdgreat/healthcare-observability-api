@@ -1,0 +1,9 @@
+.git
+.husky
+.env
+.env.*
+!.env.example
+node_modules
+dist
+coverage
+.pnpm-store

@@ -1,28 +1,31 @@
 {
-  "name": "@healthcare/observability-api",
+  "name": "@healthcare/nestjs-observability",
   "version": "1.0.0",
   "description": "Shared OpenTelemetry, Prometheus, and Pino observability module for NestJS healthcare microservices",
+  "packageManager": "pnpm@11.20.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "author": "",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "protobufjs"
-    ]
-  },
   "scripts": {
     "build": "nest build",
-    "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "vitest run",
+    "test:integration": "vitest run --config ./vitest.config.integration.ts",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
@@ -30,55 +33,56 @@
     "lint:eslint": "eslint \"{src,test}/**/*.ts\"",
     "lint:fix": "eslint \"{src,test}/**/*.ts\" --fix",
     "typecheck": "tsc --noEmit",
-    "prepare": "husky"
+    "prepare": "node -e \"if (process.env.NODE_ENV !== 'production' && !process.env.CI) { require('child_process').execSync('husky', { stdio: 'inherit' }); }\""
   },
   "dependencies": {
-    "@eslint/eslintrc": "^3.3.7",
-    "@eslint/js": "^10.0.1",
-    "@nestjs/common": "^12.0.1",
-    "@nestjs/core": "^12.0.1",
-    "@nestjs/observe": "^0.1.8",
-    "@nestjs/platform-express": "^12.0.1",
+    "@nestjs/common": "11.2.1",
+    "@nestjs/core": "11.2.1",
+    "@nestjs/platform-express": "11.2.1",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/auto-instrumentations-node": "^0.50.0",
     "@opentelemetry/exporter-trace-otlp-grpc": "^0.53.0",
     "@opentelemetry/resources": "^1.26.0",
     "@opentelemetry/sdk-node": "^0.53.0",
     "@opentelemetry/semantic-conventions": "^1.26.0",
-    "eslint": "^10.10.0",
-    "globals": "^17.12.0",
-    "nestjs-pino": "^4.1.0",
-    "pino": "^9.4.0",
-    "pino-http": "^10.3.0",
+    "nestjs-pino": "^5.1.0",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
     "prom-client": "^15.1.3",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1",
-    "typescript-eslint": "^8.70.0",
-    "unplugin-swc": "^2.0.0"
+    "rxjs": "^7.8.1"
   },
   "devDependencies": {
-    "@nestjs/cli": "^12.0.0",
-    "@nestjs/mau": "^0.2.6",
-    "@nestjs/schematics": "^12.0.0",
-    "@nestjs/testing": "^12.0.1",
+    "@eslint/eslintrc": "^3.3.7",
+    "@eslint/js": "^9.18.0",
+    "@nestjs/cli": "11.0.24",
+    "@nestjs/schematics": "11.1.0",
+    "@nestjs/testing": "11.2.1",
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
     "@types/supertest": "^7.0.0",
     "@vitest/coverage-v8": "^4.1.2",
     "eslint-config-prettier": "^10.1.8",
+    "eslint": "^9.18.0",
     "eslint-plugin-prettier": "^5.5.6",
     "eslint-plugin-unused-imports": "^4.4.1",
     "husky": "^9.1.7",
+    "globals": "^17.0.0",
     "lint-staged": "^17.5.1",
     "prettier": "^3.9.6",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
     "typescript": "^6.0.2",
-    "vite-tsconfig-paths": "^5.1.4",
+    "typescript-eslint": "^8.70.0",
+    "unplugin-swc": "^2.0.0",
     "vitest": "^4.1.2"
   },
   "lint-staged": {
-    "*.{ts,js,mjs}": [
+    "src/**/*.{ts,js,mjs}": [
+      "eslint --fix --no-warn-ignored",
+      "prettier --write"
+    ],
+    "test/**/*.{ts,js,mjs}": [
       "eslint --fix --no-warn-ignored",
       "prettier --write"
     ],
