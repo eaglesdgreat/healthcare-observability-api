@@ -151,6 +151,9 @@ When the notification API is running in its Docker Compose stack with port
 Alloy discovers the API container through the shared Docker daemon and sends
 its JSON stdout logs to Loki. The notification API does not currently export
 OpenTelemetry traces; its request IDs do not represent distributed trace IDs.
+Notification API HTTP requests (including health checks and metrics scrapes)
+and delivery activity events are JSON logs; correlate request and worker
+events using the propagated `requestId` field in Loki.
 
 Run `make help` for shortcuts. `make obs-down` preserves named volumes; remove
 them explicitly with `docker compose down --volumes` when intentionally
