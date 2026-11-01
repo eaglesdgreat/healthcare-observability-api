@@ -428,14 +428,36 @@ The observability stack runs within its own namespace (`observability`) as a com
 
 ---
 
-## 6. Verification, Health Checks, & CI/CD Pipeline
+## 6. HTTP API Documentation
 
-The repository GitHub Actions workflow runs on every branch push, pull requests
-targeting `main`, and manual dispatch. Jobs are sequentially gated so an earlier
-failure prevents later work:
+The running NestJS application exposes Swagger UI at `/api/docs` and generated
+OpenAPI 3.0 JSON at `/api/docs-json`. The specification is generated from
+controller metadata during application bootstrap, keeping operation summaries,
+parameter/request-body expectations, response status codes, media types, and
+examples alongside each endpoint implementation.
+
+| Endpoint       | Request                           | Response                                                                                                                                                              |
+| -------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /`        | No path/query parameters or body. | `200 text/plain`; example: `Hello World!`                                                                                                                             |
+| `GET /health`  | No path/query parameters or body. | `200 application/json`; example: `{"status":"ok"}`. This checks process liveness, not downstream telemetry backends.                                                  |
+| `GET /metrics` | No path/query parameters or body. | `200` Prometheus text exposition (`text/plain; version=0.0.4; charset=utf-8`); example includes `healthcare_http_requests_total`. `500` if registry collection fails. |
+
+Swagger metadata is declared on controller operations; docs routes are
+configured in `src/swagger/swagger.config.ts`. E2E tests verify the Swagger UI
+and OpenAPI JSON include the documented application routes.
+
+---
+
+## 7. Verification, Health Checks, & CI/CD Pipeline
+
+The repository GitHub Actions workflow runs for pull requests targeting `main`
+when opened, updated with new commits, or reopened, and supports manual
+dispatch. It does not run on branch pushes, avoiding duplicate runs for commits
+that also update an open pull request. Jobs are sequentially gated so an
+earlier failure prevents later work:
 
 ```text
-[push / pull request / manual dispatch]
+[pull request opened / synchronized / reopened / manual dispatch]
   -> [Typecheck] -> [Lint]
   -> [Unit tests]
   -> [Integration tests]
@@ -450,10 +472,12 @@ After all test suites pass, CI builds the production bundle and starts the
 application with no external service credentials or backend dependencies. It
 polls `GET /health` for up to 60 seconds, validates the healthy response, then
 checks `GET /metrics` for HTTP request and Node.js process metrics. It also
-parses the emitted request log as JSON and verifies the service name, HTTP
-status, and W3C trace/span ID shapes. Only after these checks pass does CI
-build the release Docker image. The container build is deliberately last; it
-does not push or publish an image.
+checks `/api/docs-json` for all three documented GET operations, their
+descriptions, successful responses, and the absence of undocumented request
+parameters or bodies. CI parses the emitted request log as JSON and verifies
+the service name, HTTP status, and W3C trace/span ID shapes. Only after these
+checks pass does CI build the release Docker image. The container build is
+deliberately last; it does not push or publish an image.
 
 The workflow uses Node.js 24 and the pnpm version pinned in `package.json`.
 Typecheck, unit, integration, and e2e jobs require no database or application

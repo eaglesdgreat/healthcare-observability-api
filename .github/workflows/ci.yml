@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  push:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -190,6 +190,29 @@ jobs:
           grep -q '^healthcare_http_requests_total' "$RUNNER_TEMP/metrics.txt"
           grep -q '^healthcare_process_cpu_user_seconds_total' "$RUNNER_TEMP/metrics.txt"
 
+          curl --connect-timeout 1 --max-time 10 \
+            --fail --silent --show-error "http://127.0.0.1:${port}/api/docs-json" \
+            --output "$RUNNER_TEMP/openapi.json"
+          node - "$RUNNER_TEMP/openapi.json" <<'NODE'
+          const assert = require("node:assert/strict");
+          const fs = require("node:fs");
+          const document = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+
+          for (const [path, summary] of [
+            ["/", "Get the service welcome message"],
+            ["/health", "Check API liveness"],
+            ["/metrics", "Scrape Prometheus metrics"],
+          ]) {
+            const operation = document.paths[path]?.get;
+            assert.ok(operation, `missing GET ${path} from the OpenAPI document`);
+            assert.equal(operation.summary, summary);
+            assert.ok(operation.description, `missing description for ${path}`);
+            assert.ok(operation.responses["200"], `missing 200 response for ${path}`);
+            assert.equal(operation.requestBody, undefined);
+            assert.deepEqual(operation.parameters ?? [], []);
+          }
+          NODE
+
           for attempt in $(seq 1 10); do
             if grep -q '"message":"request completed"' "$log_file"; then
               break
@@ -215,7 +238,7 @@ jobs:
           assert.match(entry.spanId, /^[0-9a-f]{16}$/);
           NODE
 
-          echo "Production health, metrics, and trace-correlated JSON logs passed."
+          echo "Production health, metrics, OpenAPI, and trace-correlated JSON logs passed."
 
   docker-build:
     name: 6. Build release Docker image
