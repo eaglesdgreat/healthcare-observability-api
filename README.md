@@ -25,17 +25,20 @@ pnpm run test:e2e
 
 ## Continuous integration
 
-The GitHub Actions workflow runs for every branch push, pull requests targeting
-`main`, and manual dispatch. Each stage gates the next so failures stop the
-pipeline early:
+The GitHub Actions workflow runs for pull requests targeting `main` when opened,
+updated with new commits, or reopened; it can also be started manually. It does
+not run on branch pushes, avoiding a duplicate check for commits pushed to an
+open pull request. Each stage gates the next so failures stop the pipeline
+early:
 
 1. TypeScript typecheck, then ESLint.
 2. Unit tests.
 3. Integration tests.
 4. End-to-end tests.
 5. Build and start the production bundle; poll `/health`, validate `/metrics`
-   (including request and Node.js process metrics), and verify structured
-   request logs contain valid trace and span IDs.
+   (including request and Node.js process metrics), verify `/api/docs-json`
+   describes all endpoints, and check structured request logs for valid trace
+   and span IDs.
 6. Build the release Docker image.
 
 The CI smoke check intentionally runs before the final Docker image build and
@@ -101,16 +104,31 @@ docker compose up --build -d
 The Compose stack runs the sample API, OpenTelemetry Collector, Prometheus,
 Loki, Tempo, Grafana Alloy, and Grafana.
 
-| Component          | Local URL                       |
-| ------------------ | ------------------------------- |
-| Sample API         | http://localhost:3001           |
-| API health         | http://localhost:3001/health    |
-| Prometheus metrics | http://localhost:3001/metrics   |
-| Grafana            | http://localhost:3000           |
-| Prometheus         | http://localhost:9090           |
-| Loki readiness     | http://localhost:3100/ready     |
-| Tempo              | http://localhost:3200           |
-| OTLP gRPC / HTTP   | localhost:4317 / localhost:4318 |
+| Component          | Local URL                           |
+| ------------------ | ----------------------------------- |
+| Sample API         | http://localhost:3001               |
+| API health         | http://localhost:3001/health        |
+| Prometheus metrics | http://localhost:3001/metrics       |
+| Swagger UI         | http://localhost:3001/api/docs      |
+| OpenAPI JSON       | http://localhost:3001/api/docs-json |
+| Grafana            | http://localhost:3000               |
+| Prometheus         | http://localhost:9090               |
+| Loki readiness     | http://localhost:3100/ready         |
+| Tempo              | http://localhost:3200               |
+| OTLP gRPC / HTTP   | localhost:4317 / localhost:4318     |
+
+## HTTP API documentation
+
+The service publishes interactive Swagger UI at `/api/docs` and its OpenAPI
+3.0 document at `/api/docs-json`. Both describe the service endpoints, response
+content types, and examples. The application endpoints are `GET` routes with
+no path parameters, query parameters, or request body.
+
+| Endpoint       | Description                                                             | Successful response                                                                                       |
+| -------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `GET /`        | Basic reachability greeting.                                            | `200 text/plain`; example: `Hello World!`                                                                 |
+| `GET /health`  | Process liveness only; does not test collector or backend connectivity. | `200 application/json`; example: `{"status":"ok"}`                                                        |
+| `GET /metrics` | Prometheus exposition for application and Node.js metrics.              | `200 text/plain; version=0.0.4; charset=utf-8`; includes metric samples and `# HELP` / `# TYPE` metadata. |
 
 Grafana's local-only default credentials are `admin` / `admin`; set
 `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` before starting the stack to

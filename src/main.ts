@@ -8,15 +8,19 @@ async function bootstrap(): Promise<void> {
       'healthcare-observability-api',
   })
 
-  const [{ NestFactory }, { Logger }, { AppModule }] = await Promise.all([
-    import('@nestjs/core'),
-    import('nestjs-pino'),
-    import('./app.module.js'),
-  ])
+  const [{ NestFactory }, { Logger }, { AppModule }, { setupSwagger }] =
+    await Promise.all([
+      import('@nestjs/core'),
+      import('nestjs-pino'),
+      import('./app.module.js'),
+      import('./swagger/swagger.config.js'),
+    ])
   const app = await NestFactory.create(AppModule, { bufferLogs: true })
 
   app.useLogger(app.get(Logger))
   app.enableShutdownHooks()
+  setupSwagger(app)
+
   await app.listen(process.env.PORT ?? 3000)
 }
 

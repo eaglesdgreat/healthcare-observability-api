@@ -1,3 +1,4 @@
 allowBuilds:
+  '@scarf/scarf': false
   '@swc/core': false
   protobufjs: true
