@@ -17,6 +17,13 @@ scrape_configs:
   - job_name: healthcare-notification-api
     metrics_path: /api/metrics
     static_configs:
-      - targets: ['host.docker.internal:5502']
+      - targets: ['ms-notification-api:5502']
         labels:
           service_name: healthcare-notification-api
+
+  - job_name: healthcare-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['ms-auth-api:5501']
+        labels:
+          service_name: healthcare-api

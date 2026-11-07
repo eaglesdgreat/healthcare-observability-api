@@ -37,6 +37,9 @@ services:
       - '127.0.0.1:4318:4318'
     depends_on:
       - tempo
+    networks:
+      - default
+      - healthcare-internal
     restart: unless-stopped
 
   prometheus:
@@ -50,11 +53,12 @@ services:
       - prometheus-data:/prometheus
     ports:
       - '127.0.0.1:9090:9090'
-    extra_hosts:
-      - 'host.docker.internal:host-gateway'
     depends_on:
       - observability-api
       - otel-collector
+    networks:
+      - default
+      - healthcare-internal
     restart: unless-stopped
 
   loki:
@@ -112,3 +116,9 @@ volumes:
   loki-data:
   prometheus-data:
   tempo-data:
+
+networks:
+  default: {}
+  healthcare-internal:
+    external: true
+    name: healthcare-internal

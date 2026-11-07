@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
 
-.PHONY: help build lint typecheck test test-integration test-e2e format-check compose-config obs-up obs-down obs-status obs-logs smoke-test
+.PHONY: help build lint typecheck test test-integration test-e2e format-check compose-config network obs-up obs-down obs-status obs-logs smoke-test
 
 help:
 	@echo "build          Build the NestJS application"
@@ -12,6 +12,7 @@ help:
 	@echo "test-e2e       Run end-to-end tests"
 	@echo "format-check   Verify Prettier formatting"
 	@echo "compose-config Validate Docker Compose configuration"
+	@echo "network       Create the shared private microservice network"
 	@echo "obs-up         Build and start the local observability stack"
 	@echo "obs-down       Stop the stack (keeps persisted volumes)"
 	@echo "obs-status     Show stack container status"
@@ -42,7 +43,10 @@ format-check:
 compose-config:
 	$(COMPOSE) config --quiet
 
-obs-up:
+network:
+	docker network inspect healthcare-internal >/dev/null 2>&1 || docker network create healthcare-internal
+
+obs-up: network
 	$(COMPOSE) up --build --detach
 
 obs-down:
