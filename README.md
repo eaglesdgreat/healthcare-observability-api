@@ -143,11 +143,13 @@ backends, and secret-managed credentials. Prometheus uses static Compose
 targets; Kubernetes service discovery and deployment manifests are not
 included in this repository yet.
 
-When the notification API is running in its Docker Compose stack with port
-`5502` published, Prometheus scrapes
-`http://host.docker.internal:5502/api/metrics` using the
-`healthcare-notification-api` job. The Prometheus container maps
-`host.docker.internal` to the Docker host gateway for Linux compatibility.
+The observability Compose stack joins the external `healthcare-internal`
+network for internal scraping. Prometheus scrapes the Auth API at
+`http://ms-auth-api:5501/metrics` and the Notification API at
+`http://ms-notification-api:5502/api/metrics` without routing telemetry through
+the public API gateway or publishing service ports for container access. Create
+the network by starting the frontend gateway or running `make network` before
+starting this stack.
 Alloy discovers the API container through the shared Docker daemon and sends
 its JSON stdout logs to Loki. The notification API does not currently export
 OpenTelemetry traces; its request IDs do not represent distributed trace IDs.
